@@ -1,59 +1,68 @@
 #!/usr/bin/env python3
-"""Ship the rendered front page.
+"""Copy the validated news-image entry to the make.fun output directory.
 
-Reads entry.png from this directory, checks it is really the 1024x1024
-PNG the renderer produced (magic, IHDR size, IEND tail, 1 MiB cap), then
-copies it to $MAKEFUN_OUTPUT_DIR/entry.png. Stdlib only; installs nothing.
-
-Usage: MAKEFUN_OUTPUT_DIR=/some/dir python3 main.py
+Standard library only. No network access, no permission changes on any
+directory. The entry image is read from the same directory as this script,
+validated as a genuine 1024x1024 PNG under 1 MiB, then copied byte-for-byte
+to $MAKEFUN_OUTPUT_DIR/entry.png.
 """
 
 import os
 import struct
 import sys
-from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-SIZE = (1024, 1024)
-CAP = 1024 * 1024
-IEND_TAIL = b"\x00\x00\x00\x00IEND\xaeB`\x82"
-
-
-class ShipError(Exception):
-    """Raised when the entry image fails validation."""
+MAX_BYTES = 1048576
+EXPECTED_WIDTH = 1024
+EXPECTED_HEIGHT = 1024
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
-def load_entry():
-    png = HERE / "entry.png"
-    if not png.is_file():
-        raise ShipError("entry.png is missing — run python3 render.py first")
-    raw = png.read_bytes()
-    if len(raw) > CAP:
-        raise ShipError(f"entry.png is {len(raw)} bytes, over the 1 MiB cap")
-    if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise ShipError("entry.png has a bad PNG signature")
-    if len(raw) < 33 or raw[12:16] != b"IHDR":
-        raise ShipError("entry.png has no IHDR chunk")
-    dims = struct.unpack(">II", raw[16:24])
-    if dims != SIZE:
-        raise ShipError(f"entry.png is {dims[0]}x{dims[1]}, expected 1024x1024")
-    if raw[-12:] != IEND_TAIL:
-        raise ShipError("entry.png has no IEND chunk")
-    return raw
+def fail(message):
+    print("error: " + message, file=sys.stderr)
+    return 1
 
 
 def main():
-    target_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "output")
-    raw = load_entry()
-    dest = Path(target_dir) / "entry.png"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(raw)
-    print(f"wrote {dest} ({len(raw)} bytes)")
+    here = os.path.dirname(os.path.abspath(__file__))
+    source = os.path.join(here, "entry.png")
+
+    try:
+        with open(source, "rb") as handle:
+            data = handle.read()
+    except OSError as exc:
+        return fail("cannot read entry.png: " + str(exc))
+
+    if len(data) > MAX_BYTES:
+        return fail(
+            "entry.png is %d bytes, over the 1 MiB limit" % len(data)
+        )
+    if len(data) < 8 or data[:8] != PNG_MAGIC:
+        return fail("entry.png is not a PNG file (bad magic bytes)")
+
+    # IHDR chunk: 4-byte length, 4-byte type, then width and height.
+    if len(data) < 33 or data[12:16] != b"IHDR":
+        return fail("entry.png has no IHDR chunk")
+    width, height = struct.unpack(">II", data[16:24])
+    if width != EXPECTED_WIDTH or height != EXPECTED_HEIGHT:
+        return fail(
+            "entry.png is %dx%d, expected 1024x1024" % (width, height)
+        )
+
+    # The IEND chunk is the last 12 bytes: zero length, "IEND", CRC.
+    if len(data) < 12 or data[-8:-4] != b"IEND":
+        return fail("entry.png is missing its IEND chunk")
+
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
+    if not out_dir:
+        out_dir = os.path.join(here, "output")
+    os.makedirs(out_dir, exist_ok=True)
+    dest = os.path.join(out_dir, "entry.png")
+    with open(dest, "wb") as handle:
+        handle.write(data)
+
+    print("wrote %s (%d bytes)" % (dest, len(data)))
+    return 0
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except ShipError as err:
-        print(f"error: {err}", file=sys.stderr)
-        raise SystemExit(1)
+    sys.exit(main())
