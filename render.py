@@ -380,15 +380,29 @@ def draw_clock(d):
     small = font("Inter.ttf", 8)
     d.text((x0, axis_y + 4), "00", font=small, fill=P["FAINT"])
     d.text((x1 - 12, axis_y + 4), "24", font=small, fill=P["FAINT"])
+    # Label x positions, resolved right-to-left per side so same-side
+    # labels never overlap: down labels clear the "00" tick (x0 + 14),
+    # and an earlier up label shifts left instead of the later one.
+    lx_for = {}
+    placed = {"up": [], "down": []}
+    for hour, label, side in reversed(DAY_EVENTS):
+        ex = x0 + hour / 24.0 * (x1 - x0)
+        lw = text_w(d, label, small)
+        lx = max(x0, min(ex - lw / 2, x1 - lw))
+        if side == "down":
+            lx = max(lx, x0 + 14)
+        for pl, pr in placed[side]:
+            if lx < pr + 6 and lx + lw > pl:
+                lx = max(x0, pl - 6 - lw)
+        placed[side].append((lx, lx + lw))
+        lx_for[hour] = lx
     for hour, label, side in DAY_EVENTS:
         ex = x0 + hour / 24.0 * (x1 - x0)
         d.ellipse([ex - 4, axis_y - 4, ex + 4, axis_y + 4], fill=P["RED"])
-        lw = text_w(d, label, small)
-        lx = max(x0, min(ex - lw / 2, x1 - lw))
         if side == "up":
-            d.text((lx, axis_y - 16), label, font=small, fill=P["INK"])
+            d.text((lx_for[hour], axis_y - 16), label, font=small, fill=P["INK"])
         else:
-            d.text((lx, axis_y + 6), label, font=small, fill=P["INK"])
+            d.text((lx_for[hour], axis_y + 6), label, font=small, fill=P["INK"])
 
 
 def draw_ticker(d):
